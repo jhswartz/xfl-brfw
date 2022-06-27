@@ -1,0 +1,6 @@
+#!/bin/sh
+
+. /etc/init.d/filesystems
+. /etc/init.d/interfaces
+. /etc/init.d/filter
+. /etc/init.d/bridge

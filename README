@@ -1,0 +1,212 @@
+xfl-brfw 0.1
+
+
+INTRODUCTION
+
+    This guide produces a small Linux distribution which 
+    allows an x86 system to act as an ethernet bridging
+    firewall.
+
+    The distribution consists of xfbl, Linux 5.18.5, with
+    BusyBox 1.35.0 and ebtables linked against musl 1.2.3.
+
+    The reader is expected to identify and install any
+    dependencies missing from their build system.
+
+
+PREPARE ENVIRONMENT
+
+    export XFL=$(readlink -f .)
+    export HOST=i686-linux-gnu
+    mkdir src dist
+
+
+DOWNLOAD & EXTRACT LINUX
+
+    cd "$XFL/src"
+    wget https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/snapshot/linux-5.18.5.tar.gz 
+    tar xzf linux-5.18.5.tar.gz
+    cd linux-5.18.5
+
+
+PREPARE LINUX BUILD
+
+    mkdir build
+    cd build
+
+
+SELECT BASE LINUX CONFIGURATION
+
+    cp "$XFL/conf/linux/5.18.5/brfw.config" .config
+    make -f ../Makefile oldconfig
+
+
+ADJUST LINUX CONFIGURATION AS NEEDED
+
+    make menuconfig
+
+
+BUILD & DISTRIBUTE LINUX KERNEL IMAGE 
+
+    make bzImage
+    cp arch/x86/boot/bzImage "$XFL/dist/bzImage"
+
+
+INSTALL LINUX HEADERS
+
+    make headers_install INSTALL_HDR_PATH="$XFL/tools"
+
+
+DOWNLOAD & EXTRACT MUSL
+
+    cd "$XFL/src"
+    wget https://musl.libc.org/releases/musl-1.2.3.tar.gz
+    tar xzf musl-1.2.3.tar.gz
+    cd musl-1.2.3
+
+
+CONFIGURE MUSL
+
+    mkdir build
+    cd build
+    ../configure --host=$HOST --prefix="$XFL/tools"
+
+
+BUILD & INSTALL MUSL
+
+    make
+    make install
+
+
+PREPARE TOOLS FOR BUSYBOX
+
+    export PATH="$XFL/tools/bin":$PATH
+    ln -s "$(command -v $HOST-ar)" "$XFL/tools/bin/musl-ar"
+    ln -s "$(command -v $HOST-strip)" "$XFL/tools/bin/musl-strip"
+
+
+DOWNLOAD & EXTRACT BUSYBOX
+
+    cd "$XFL/src"
+    wget https://busybox.net/downloads/busybox-1.35.0.tar.bz2
+    tar xjf busybox-1.35.0.tar.bz2
+    cd busybox-1.35.0
+
+
+PREPARE BUSYBOX BUILD
+
+    mkdir build
+    cd build
+
+
+SELECT A BUSYBOX CONFIGURATION
+
+    cp "$XFL/conf/busybox/1.35.0/brfw.config" .config
+    make -f ../Makefile KBUILD_SRC=.. oldconfig
+
+
+ADJUST BUSYBOX CONFIGURATION AS NEEDED
+
+    make menuconfig
+
+
+BUILD BUSYBOX
+
+    make
+    make install
+
+
+CLONE EBTABLES
+
+    cd "$XFL/src"
+    git clone git://git.netfilter.org/ebtables
+    cd ebtables
+
+
+PREPARE EBTABLES FOR CONFIGURATION
+
+    ./autogen.sh
+
+
+PATCH EBTABLES
+
+    sed -i -e 's/^static_LDFLAGS = -static/static_LDFLAGS = -all-static/g' Makefile.am
+
+
+CONFIGURE EBTABLES
+
+    mkdir build
+    cd build
+    ../configure --host=i686-linux-gnu --prefix="$XFL/root" \
+                 --disable-shared --enable-static \
+                 CC="$XFL/tools/bin/musl-gcc" CFLAGS="-I$XFL/tools/include" \
+                 LD="$XFL/tools/bin/musl-gcc"
+
+
+BUILD EBTABLES
+
+    make static
+    musl-strip static
+
+
+INSTALL EBTABLES
+
+    cp static "$XFL/root/sbin/ebtables"
+
+
+PREPARE ROOT FILESYSTEM DIRECTORIES
+
+    cd "$XFL/root"
+    mkdir dev lib lib/firmware proc run sys tmp
+
+
+CREATE TTY DEVICES
+
+    mknod -m 600 dev/tty1 c 4 1
+    mknod -m 600 dev/tty2 c 4 2
+    mknod -m 600 dev/tty3 c 4 3
+    mknod -m 600 dev/tty4 c 4 4
+    mknod -m 600 dev/tty5 c 4 5
+
+
+EDIT EBTABLES RULES AS NEEDED
+
+    vi etc/rc.d/filter
+
+
+GENERATE INITRAMFS
+
+    find . | cpio -H newc -o | xz --check=crc32 > "$XFL/dist/initramfs"
+
+
+CLONE XFBL
+ 
+    cd "$XFL/src"
+    git clone https://github.com/jhswartz/xfbl.git 
+    cd xfbl
+
+
+CREATE LINKS TO KERNEL & INITRAMFS
+
+    ln -s "$XFL/dist/bzImage" ext/kernel
+    ln -s "$XFL/dist/initramfs" ext/initramfs
+
+
+AMMEND KERNEL COMMAND LINE AS NEEDED
+
+    echo -n "auto" > ext/cmdline
+
+
+GENERATE 1.44MB FLOPPY IMAGE
+
+    make dist
+    ls -al dist/1440k.img
+    sha256sum dist/1440k.img
+
+
+GENERATE BOOTABLE ISO9660 IMAGE
+
+    make iso
+    ls -al iso/1440k.iso
+    sha256sum dist/1440k.iso
+
