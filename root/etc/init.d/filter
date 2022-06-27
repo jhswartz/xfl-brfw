@@ -1,0 +1,5 @@
+# Forward ARP traffic
+ebtables -A FORWARD -j ACCEPT -p 0806
+
+# Drop everything else
+ebtables -A FORWARD -j DROP
